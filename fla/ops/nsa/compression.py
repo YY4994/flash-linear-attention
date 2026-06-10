@@ -20,7 +20,8 @@ from fla.utils import autocast_custom_bwd, autocast_custom_fwd, autotune_cache_k
 })
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=num_warps)
+        triton.Config({'BC': bc}, num_warps=num_warps)
+        for bc in [64, 32, 16]
         for num_warps in [1, 2, 4]
     ],
     key=['BS', 'BK', 'BV'],
@@ -101,10 +102,10 @@ def parallel_nsa_compression_fwd_kernel(
         # [G, BC]
         b_p = exp(b_s - b_m[:, None])
         # [G]
-        b_acc = b_acc * b_r + tl.sum(b_p, 1)
+        b_acc = tl.math.fma(b_acc, b_r, tl.sum(b_p, 1))
 
         # [G, BV]
-        b_o = b_o * b_r[:, None] + tl.dot(b_p.to(b_q.dtype), b_v)
+        b_o = tl.math.fma(b_o, b_r[:, None], tl.dot(b_p.to(b_q.dtype), b_v))
 
         b_mp = b_m
     if NC == 0:
@@ -367,7 +368,6 @@ def parallel_nsa_compression_fwd(
         G=G,
         K=K,
         V=V,
-        BC=BC,
         BS=BS,
         BK=BK,
         BV=BV,

@@ -488,3 +488,97 @@ register_op(OpConfig(
     default_shapes=_layer_default_shapes,
     category='naive_attnres',
 ))
+
+# --- N: NSA (Native Sparse Attention) ---
+# NSA uses GQA with H kv heads and HQ = H * G query heads (G >= 16).
+# The shape configs below use `H` for kv heads and `HQ` for query heads.
+
+
+def shape_BTHD_HQ(B, T, H, D, HQ=None, **kw):
+    """Shape for q/g tensors with query heads HQ potentially != kv heads H."""
+    if HQ is not None:
+        return (B, T, HQ, D)
+    return (B, T, H, D)
+
+
+def shape_BTH_HQ(B, T, H, D, HQ=None, **kw):
+    """Shape for per-head scalars with query heads HQ."""
+    if HQ is not None:
+        return (B, T, HQ)
+    return (B, T, H)
+
+
+_nsa_default_shapes = {
+    # 优化目标: 长序列为主，NSA 在 T≥8K 时才有显著计算量体现优化效果
+    # 压缩注意力计算量 ~ T²/BS，T 是主导因素
+
+    # T 扫描 (B=1, H=4, D=64) — 8K 起跳，覆盖长序列到超长序列
+    'T8K':   {'B': 1, 'T': 8192,  'H': 4, 'D': 64,  'HQ': 64},
+    'T16K':  {'B': 1, 'T': 16384, 'H': 4, 'D': 64,  'HQ': 64},
+    'T32K':  {'B': 1, 'T': 32768, 'H': 4, 'D': 64,  'HQ': 64},
+    'T64K':  {'B': 1, 'T': 65536, 'H': 4, 'D': 64,  'HQ': 64},
+
+    # D 对比 (B=1, T=16K, H=4) — 在长序列上对比宽/窄 head
+    'D64':   {'B': 1, 'T': 16384, 'H': 4, 'D': 64,  'HQ': 64},
+    'D128':  {'B': 1, 'T': 16384, 'H': 4, 'D': 128, 'HQ': 64},
+
+    # 多序列训练场景 (T=16K)
+    'B2':    {'B': 2, 'T': 16384, 'H': 4, 'D': 64,  'HQ': 64},
+}
+
+
+def _nsa_post_init(inputs, B, T, H, D, HQ=None, **kw):
+    """Generate valid block_indices for naive_nsa benchmark."""
+    S = 16
+    n_blocks = (T + 63) // 64
+    with torch.no_grad():
+        idx = torch.randint(0, max(1, n_blocks), (B, T, H, S), device=inputs['q'].device, dtype=torch.long)
+        inputs['block_indices'] = idx
+
+
+register_op(OpConfig(
+    name='parallel_nsa',
+    import_path='fla.ops.nsa',
+    inputs={
+        'q': TensorSpec(shape_BTHD_HQ),
+        'k': TensorSpec(shape_BTHD),
+        'v': TensorSpec(shape_BTHD),
+        'g_cmp': TensorSpec(shape_BTH_HQ, transform=sigmoid_transform),
+        'g_slc': TensorSpec(shape_BTH_HQ, transform=sigmoid_transform),
+    },
+    extra_kwargs={'block_counts': 16, 'block_size': 64, 'window_size': 0},
+    output_is_tuple=False,
+    default_shapes=_nsa_default_shapes,
+    category='nsa',
+))
+
+register_op(OpConfig(
+    name='naive_nsa',
+    import_path='fla.ops.nsa',
+    inputs={
+        'q': TensorSpec(shape_BTHD_HQ),
+        'k': TensorSpec(shape_BTHD),
+        'v': TensorSpec(shape_BTHD),
+    },
+    func_name='naive_nsa',
+    extra_kwargs={'block_size': 64},
+    output_is_tuple=False,
+    default_shapes=_nsa_default_shapes,
+    post_init=_nsa_post_init,
+    category='nsa',
+))
+
+register_op(OpConfig(
+    name='parallel_nsa_compression',
+    import_path='fla.ops.nsa.compression',
+    inputs={
+        'q': TensorSpec(shape_BTHD_HQ),
+        'k': TensorSpec(shape_BTHD),
+        'v': TensorSpec(shape_BTHD),
+    },
+    func_name='parallel_nsa_compression',
+    extra_kwargs={'block_size': 64},
+    output_is_tuple=True,
+    default_shapes=_nsa_default_shapes,
+    category='nsa',
+))
