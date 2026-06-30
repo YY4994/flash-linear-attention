@@ -520,12 +520,31 @@ def _bench_at_ref(ref, op_names, shape_configs, modes):
 
     try:
         print(f"\n  Benchmarking at '{ref}' (via git worktree)...")
+
+        # # Remove any stale worktree for the same ref (left from a prior
+        # # crash) so we don't get exit status 128 on `git worktree add`.
+        # existing = subprocess.run(
+        #     ['git', 'worktree', 'list', '--porcelain'],
+        #     cwd=project_root, capture_output=True, text=True,
+        # ).stdout
+        # for entry in existing.split('\n\n'):
+        #     if entry.strip() and f'branch refs/heads/{ref}' in entry or f'branch refs/remotes/' not in entry:
+        #         for line in entry.strip().split('\n'):
+        #             if line.startswith('worktree '):
+        #                 stale_dir = line[len('worktree '):]
+        #                 if stale_dir != worktree_dir:
+        #                     print(f"    Removing stale worktree: {stale_dir}")
+        #                     subprocess.run(
+        #                         ['git', 'worktree', 'remove', '--force', stale_dir],
+        #                         cwd=project_root, capture_output=True,
+        #                     )
+
         subprocess.run(
             ['git', 'worktree', 'add', worktree_dir, ref],
             cwd=project_root, capture_output=True, check=True,
         )
         subprocess.run(
-            [sys.executable, '-m', 'pip', 'install', '-e', '.', '-q'],
+            [sys.executable, '-m', 'pip', 'install', '-e', '.', '--no-deps', '-q'],
             cwd=worktree_dir, capture_output=True,
         )
 
@@ -551,7 +570,7 @@ def _bench_at_ref(ref, op_names, shape_configs, modes):
         )
         # Reinstall current branch's fla
         subprocess.run(
-            [sys.executable, '-m', 'pip', 'install', '-e', '.', '-q'],
+            [sys.executable, '-m', 'pip', 'install', '-e', '.', '--no-deps', '-q'],
             cwd=project_root, capture_output=True,
         )
         shutil.rmtree(tmpdir, ignore_errors=True)

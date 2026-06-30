@@ -181,7 +181,7 @@ def checkout_and_install(ref: str, clear_cache: bool = True):
     run_cmd(["git", "checkout", ref])
     print("  Installing package...")
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-e", ".", "-q"],
+        [sys.executable, "-m", "pip", "install", "-e", ".", "--no-deps", "-q"],
         cwd=str(PROJECT_ROOT), capture_output=True,
     )
     if clear_cache:
